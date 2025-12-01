@@ -312,5 +312,5 @@ git log --oneline -5
 
 ---
 
-**Última actualización:** Diciembre 2024  
+**Última actualización:** Diciembre 2025  
 **Versión:** 2.0
