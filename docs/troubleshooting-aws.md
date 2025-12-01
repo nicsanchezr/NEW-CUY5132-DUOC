@@ -811,7 +811,7 @@ EC2 → Instances → Monitoring → View in CloudWatch
 
 ---
 
-**Última actualización:** Diciembre 2024  
+**Última actualización:** Diciembre 2025 
 **Versión:** 2.0
 
 **💡 Tip:** Documenta cada sesión de lab con las IPs actuales, configuraciones aplicadas, y Security Groups utilizados. Esto te ahorrará mucho tiempo en troubleshooting.
