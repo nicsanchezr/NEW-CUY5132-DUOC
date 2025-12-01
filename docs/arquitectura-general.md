@@ -863,6 +863,6 @@ fail2ban-client get kamailio-auth banip
 
 ---
 
-**Última actualización:** Diciembre 2024  
+**Última actualización:** Diciembre 2025  
 **Versión:** 2.0 (Actualizada - Labs 2.1 a 2.4 completos)  
 **Autor:** CUY5132 - DUOC UC
