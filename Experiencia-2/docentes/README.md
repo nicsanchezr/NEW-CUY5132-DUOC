@@ -483,7 +483,7 @@ cd Experiencia-2/docentes/
 
 ---
 
-**Última actualización:** Diciembre 2024  
+**Última actualización:** Diciembre 2025  
 **Versión:** 2.0  
 **Mantenedor:** Nicolas Sanchez (nicsanchezr)  
 **GitHub:** https://github.com/nicsanchezr/NEW-CUY5132-DUOC
