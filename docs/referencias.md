@@ -412,7 +412,7 @@ repo:kamailio/kamailio is:issue "error"
 
 ---
 
-**Última actualización:** 2024  
+**Última actualización:** 2025  
 **Versión:** 1.0
 
 **Contribuciones:** Si encuentras enlaces rotos o recursos útiles adicionales, reporta via GitHub Issues.
