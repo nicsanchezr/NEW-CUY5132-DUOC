@@ -824,7 +824,7 @@ sudo systemctl start rtpproxy
 
 ---
 
-**Última actualización:** Diciembre 2024  
+**Última actualización:** Diciembre 2025  
 **Versión:** 2.0
 
 **💡 Consejo:** Mantén un log de problemas y soluciones que encuentres. La documentación de tus propios troubleshooting es invaluable para referencia futura.
