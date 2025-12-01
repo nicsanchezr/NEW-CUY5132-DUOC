@@ -427,18 +427,18 @@ Al completar los laboratorios de este curso, los estudiantes habrán desarrollad
 
 ## 📅 Actualizaciones
 
-**Última actualización:** Diciembre 2024  
+**Última actualización:** Diciembre 2025  
 **Versión:** 2.0
 
 ### Changelog
 
-- **v2.0** (Dic 2024): Actualización completa para semestre 2024-2
+- **v2.0** (Dic 2025): Actualización completa para semestre 2024-2
   - Scripts mejorados con detección automática de IPs
   - Material complementario agregado
   - Documentación expandida
   - Lab 2.4 (sngrep + fail2ban) agregado
 
-- **v1.0** (2024): Versión inicial
+- **v1.0** (2025): Versión inicial
 
 ---
 
