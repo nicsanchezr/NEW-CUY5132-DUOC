@@ -5,22 +5,22 @@
 #  Compatible con Ubuntu 22.04 LTS y Ubuntu 24.04 LTS
 #
 #  Autor:   CUY5132 — Comunicaciones Unificadas y VoIP — DUOC UC
-#  Versión: 2.0
+#  Versión: 3.0
 #  Uso:     sudo bash install_pbx.sh
 # =============================================================================
 
 set -euo pipefail
 
-# ─── Colores ────────────────────────────────────────────────────────────────
+# ─── Colores ─────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[1;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# ─── Configuración ──────────────────────────────────────────────────────────
+# ─── Configuración ────────────────────────────────────────────────────────────
 LOG_FILE="/var/log/install_pbx.log"
 ASTERISK_VERSION="22"
 FREEPBX_VERSION="17.0"
@@ -28,23 +28,119 @@ FREEPBX_URL="http://mirror.freepbx.org/modules/packages/freepbx/freepbx-${FREEPB
 ASTERISK_URL="https://downloads.asterisk.org/pub/telephony/asterisk/asterisk-${ASTERISK_VERSION}-current.tar.gz"
 PHP_TARGET="8.2"
 
-# ─── Funciones de logging ────────────────────────────────────────────────────
-log()     { echo -e "${NC}$(date '+%H:%M:%S') $*" | tee -a "$LOG_FILE"; }
-ok()      { echo -e "${GREEN}  ✔  $*${NC}" | tee -a "$LOG_FILE"; }
-info()    { echo -e "${CYAN}  →  $*${NC}" | tee -a "$LOG_FILE"; }
-warn()    { echo -e "${YELLOW}  ⚠  $*${NC}" | tee -a "$LOG_FILE"; }
-error()   { echo -e "${RED}  ✘  $*${NC}" | tee -a "$LOG_FILE"; }
-step()    { echo -e "\n${BOLD}${BLUE}━━━  $*  ━━━${NC}\n" | tee -a "$LOG_FILE"; }
-banner()  {
+# Variable global que rastrea el paso activo (usada en el reporte de error)
+CURRENT_STEP="Inicializacion"
+INSTALL_START=$(date '+%Y-%m-%d %H:%M:%S')
+
+# ─── Funciones de logging ─────────────────────────────────────────────────────
+_ts() { date '+%H:%M:%S'; }
+
+log()   { echo -e "${NC}[$(_ts)] $*"          | tee -a "$LOG_FILE"; }
+ok()    { echo -e "${GREEN}[$(_ts)]  OK  $*${NC}"    | tee -a "$LOG_FILE"; }
+info()  { echo -e "${CYAN}[$(_ts)]  >>  $*${NC}"    | tee -a "$LOG_FILE"; }
+warn()  { echo -e "${YELLOW}[$(_ts)]  WW  $*${NC}"  | tee -a "$LOG_FILE"; }
+error() { echo -e "${RED}[$(_ts)]  EE  $*${NC}"     | tee -a "$LOG_FILE"; }
+
+step() {
+  CURRENT_STEP="$*"
+  echo -e "\n${BOLD}${BLUE}[$(_ts)] === $* ===${NC}\n" | tee -a "$LOG_FILE"
+}
+
+# Ejecuta un comando, lo registra con descripción y captura su salida en el log
+# Uso: run "descripción" comando [argumentos...]
+run() {
+  local desc="$1"; shift
+  info "$desc"
+  echo "  [CMD $(date '+%H:%M:%S')] $*" >> "$LOG_FILE"
+  if ! "$@" >> "$LOG_FILE" 2>&1; then
+    local rc=$?
+    echo "  [FAIL $(date '+%H:%M:%S')] codigo=$rc  cmd=$*" >> "$LOG_FILE"
+    return $rc
+  fi
+  echo "  [DONE $(date '+%H:%M:%S')] $*" >> "$LOG_FILE"
+}
+
+banner() {
   echo -e "${BOLD}${BLUE}"
   echo "╔══════════════════════════════════════════════════════════════╗"
   echo "║        Instalador PBX — Asterisk 22 + FreePBX 17            ║"
   echo "║        CUY5132 — DUOC UC  |  Ubuntu 22.04 / 24.04           ║"
+  echo "║        Version 3.0  —  Log: /var/log/install_pbx.log        ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
   echo -e "${NC}"
 }
 
-# ─── Verificaciones previas ──────────────────────────────────────────────────
+# ─── Manejador de errores ─────────────────────────────────────────────────────
+on_error() {
+  local exit_code=$?
+  local line_number=$1
+  local failed_cmd="${BASH_COMMAND}"
+
+  echo -e "\n${RED}${BOLD}" | tee -a "$LOG_FILE"
+  echo "╔══════════════════════════════════════════════════════════════╗" | tee -a "$LOG_FILE"
+  echo "║              ERROR — INSTALACION FALLIDA                    ║" | tee -a "$LOG_FILE"
+  echo "╚══════════════════════════════════════════════════════════════╝" | tee -a "$LOG_FILE"
+  echo -e "${NC}" | tee -a "$LOG_FILE"
+
+  {
+    echo ""
+    echo "===================================================="
+    echo "  REPORTE DE ERROR  —  $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "===================================================="
+    echo "  Paso donde fallo : $CURRENT_STEP"
+    echo "  Linea del script : $line_number"
+    echo "  Comando fallido  : $failed_cmd"
+    echo "  Codigo de salida : $exit_code"
+    echo "  Inicio instalac. : $INSTALL_START"
+    echo "===================================================="
+    echo "  INFORMACION DEL SISTEMA"
+    echo "===================================================="
+    echo "  Hostname     : $(hostname)"
+    echo "  SO           : $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')"
+    echo "  Kernel       : $(uname -r)"
+    echo "  Arquitectura : $(uname -m)"
+    echo ""
+    echo "  Memoria RAM:"
+    free -h | awk 'NR==2{printf "    Total: %-8s  Usado: %-8s  Libre: %s\n", $2, $3, $4}'
+    echo ""
+    echo "  Espacio en disco:"
+    df -h /usr/src / 2>/dev/null | awk 'NR>1{printf "    %-12s Total: %-8s  Usado: %-8s  Libre: %s (%s)\n", $6, $2, $3, $4, $5}'
+    echo "===================================================="
+    echo "  ESTADO DE SERVICIOS"
+    echo "===================================================="
+    for svc in asterisk apache2 mariadb; do
+      printf "  %-12s : %s\n" "$svc" "$(systemctl is-active "$svc" 2>/dev/null || echo 'no instalado')"
+    done
+    echo "===================================================="
+    echo "  VERSIONES DETECTADAS"
+    echo "===================================================="
+    echo "  PHP activo : $(php -v 2>/dev/null | head -1 || echo 'no instalado')"
+    echo "  Node.js    : $(node -v 2>/dev/null || echo 'no instalado')"
+    echo "  MariaDB    : $(mysql --version 2>/dev/null || echo 'no instalado')"
+    echo "===================================================="
+    echo "  ULTIMAS 50 LINEAS DEL LOG (contexto del fallo)"
+    echo "===================================================="
+  } | tee -a "$LOG_FILE"
+
+  # Contexto inmediato del error (sin la sección que acabamos de escribir)
+  grep -v "ULTIMAS 50" "$LOG_FILE" | tail -50 | tee -a "$LOG_FILE"
+
+  echo "" | tee -a "$LOG_FILE"
+  echo -e "${YELLOW}${BOLD}  Que hacer ahora:${NC}"
+  echo -e "${YELLOW}  1. Comparta el log completo con su docente:${NC}"
+  echo -e "${CYAN}       cat $LOG_FILE${NC}"
+  echo -e "${YELLOW}  2. Para ver solo el reporte de error:${NC}"
+  echo -e "${CYAN}       grep -A 80 'REPORTE DE ERROR' $LOG_FILE${NC}"
+  echo -e "${YELLOW}  3. Para seguir el log en tiempo real en otra sesion:${NC}"
+  echo -e "${CYAN}       tail -f $LOG_FILE${NC}\n"
+
+  exit "$exit_code"
+}
+
+# Activar trap — captura cualquier error no manejado
+trap 'on_error $LINENO' ERR
+
+# ─── Verificaciones previas ───────────────────────────────────────────────────
 check_root() {
   if [[ $EUID -ne 0 ]]; then
     error "Este script debe ejecutarse como root: sudo bash install_pbx.sh"
@@ -53,86 +149,80 @@ check_root() {
 }
 
 detect_ubuntu() {
-  if [[ ! -f /etc/os-release ]]; then
-    error "No se puede detectar el sistema operativo."
-    exit 1
-  fi
+  [[ -f /etc/os-release ]] || { error "No se puede detectar el SO."; exit 1; }
   source /etc/os-release
-  if [[ "$ID" != "ubuntu" ]]; then
-    error "Este script solo es compatible con Ubuntu. SO detectado: $ID"
-    exit 1
-  fi
-  UBUNTU_VERSION="$VERSION_ID"
-  if [[ "$UBUNTU_VERSION" != "22.04" && "$UBUNTU_VERSION" != "24.04" ]]; then
-    warn "Versión de Ubuntu no verificada oficialmente: $UBUNTU_VERSION"
-    warn "El script fue diseñado para 22.04 y 24.04. Continuando de todos modos..."
-  fi
+  [[ "$ID" == "ubuntu" ]] || { error "Solo compatible con Ubuntu. SO detectado: $ID"; exit 1; }
 
-  # Determinar qué versión de PHP deshabilitar
+  UBUNTU_VERSION="$VERSION_ID"
   case "$UBUNTU_VERSION" in
     "22.04") PHP_DEFAULT="8.1" ;;
     "24.04") PHP_DEFAULT="8.3" ;;
-    *)       PHP_DEFAULT="8.1" ;;  # fallback
+    *) PHP_DEFAULT="8.1"
+       warn "Ubuntu $UBUNTU_VERSION no verificado oficialmente. Continuando..." ;;
   esac
 
   ok "Sistema detectado: Ubuntu $UBUNTU_VERSION"
-  info "PHP por defecto del sistema: $PHP_DEFAULT → Se instalará PHP $PHP_TARGET"
+  info "PHP por defecto del sistema: $PHP_DEFAULT  ->  Se instalara PHP $PHP_TARGET"
 }
 
 check_internet() {
-  info "Verificando conexión a internet..."
-  if ! curl -s --max-time 5 https://downloads.asterisk.org > /dev/null; then
-    error "Sin conexión a internet. Verifique la red antes de continuar."
+  info "Verificando conexion a internet..."
+  if ! curl -s --max-time 10 https://downloads.asterisk.org > /dev/null; then
+    error "Sin conexion a internet o el servidor de Asterisk no responde."
     exit 1
   fi
-  ok "Conexión a internet disponible."
+  ok "Conexion a internet disponible."
 }
 
-# ─── Paso 1: Dependencias ────────────────────────────────────────────────────
+check_disk_space() {
+  info "Verificando espacio en disco..."
+  local free_gb
+  free_gb=$(df /usr/src --output=avail -BG | tail -1 | tr -d 'G ')
+  if [[ "$free_gb" -lt 5 ]]; then
+    error "Espacio insuficiente. Se requieren al menos 5 GB libres en /usr/src."
+    error "Espacio disponible: ${free_gb} GB"
+    exit 1
+  fi
+  ok "Espacio en disco suficiente: ${free_gb} GB libres."
+}
+
+# ─── Paso 1: Dependencias ─────────────────────────────────────────────────────
 install_dependencies() {
   step "PASO 1 — Instalando dependencias del sistema"
-  apt-get update -y >> "$LOG_FILE" 2>&1
-  apt-get install -y \
+  run "Actualizando lista de paquetes..." apt-get update -y
+  run "Instalando dependencias de compilacion..." apt-get install -y \
     sox pkg-config libedit-dev unzip git gnupg2 curl \
     libnewt-dev libssl-dev libncurses5-dev subversion \
     libsqlite3-dev build-essential libjansson-dev libxml2-dev \
-    uuid-dev software-properties-common wget >> "$LOG_FILE" 2>&1
+    uuid-dev software-properties-common wget
   ok "Dependencias instaladas correctamente."
 }
 
-# ─── Paso 2: Instalar Asterisk ───────────────────────────────────────────────
+# ─── Paso 2: Instalar Asterisk ────────────────────────────────────────────────
 install_asterisk() {
   step "PASO 2 — Descargando e instalando Asterisk $ASTERISK_VERSION"
 
   cd /usr/src
 
   info "Descargando Asterisk ${ASTERISK_VERSION}..."
-  wget -q --show-progress "$ASTERISK_URL" -O "asterisk-${ASTERISK_VERSION}-current.tar.gz"
+  echo "  [CMD $(_ts)] wget $ASTERISK_URL" >> "$LOG_FILE"
+  wget -q --show-progress "$ASTERISK_URL" -O "asterisk-${ASTERISK_VERSION}-current.tar.gz" 2>&1 | tee -a "$LOG_FILE"
 
-  info "Extrayendo archivo..."
-  tar -xzf "asterisk-${ASTERISK_VERSION}-current.tar.gz"
+  run "Extrayendo archivo..." tar -xzf "asterisk-${ASTERISK_VERSION}-current.tar.gz"
 
   ASTERISK_DIR=$(find /usr/src -maxdepth 1 -type d -name "asterisk-${ASTERISK_VERSION}.*" | head -1)
-  if [[ -z "$ASTERISK_DIR" ]]; then
-    error "No se encontró el directorio de Asterisk extraído."
-    exit 1
-  fi
-
+  [[ -n "$ASTERISK_DIR" ]] || { error "No se encontro el directorio de Asterisk extraido."; exit 1; }
+  info "Directorio de compilacion: $ASTERISK_DIR"
   cd "$ASTERISK_DIR"
 
-  info "Descargando fuentes MP3..."
-  contrib/scripts/get_mp3_source.sh >> "$LOG_FILE" 2>&1 || warn "get_mp3_source.sh tuvo advertencias (no crítico)."
+  run "Descargando fuentes MP3..." contrib/scripts/get_mp3_source.sh || \
+    warn "get_mp3_source.sh tuvo advertencias (no es critico)."
 
-  info "Instalando prerequisitos de Asterisk..."
-  contrib/scripts/install_prereq install >> "$LOG_FILE" 2>&1
+  run "Instalando prerequisitos de Asterisk..." contrib/scripts/install_prereq install
+  run "Ejecutando ./configure..."               ./configure
+  run "Generando menuselect.makeopts..."        make menuselect.makeopts
 
-  info "Ejecutando ./configure..."
-  ./configure >> "$LOG_FILE" 2>&1
-
-  # Selección de módulos sin interfaz interactiva
-  info "Configurando módulos (menuselect automático)..."
-  make menuselect.makeopts >> "$LOG_FILE" 2>&1
-
+  info "Configurando modulos (menuselect automatico)..."
   menuselect/menuselect \
     --enable format_mp3 \
     --enable res_config_mysql \
@@ -151,35 +241,39 @@ install_asterisk() {
     --enable EXTRA-SOUNDS-EN-ALAW \
     --enable EXTRA-SOUNDS-EN-GSM \
     menuselect.makeopts >> "$LOG_FILE" 2>&1
+  ok "Modulos configurados."
 
-  info "Compilando Asterisk (esto puede tardar varios minutos)..."
+  info "Compilando Asterisk con $(nproc) nucleos (puede tardar varios minutos)..."
+  echo "  [CMD $(_ts)] make -j$(nproc)" >> "$LOG_FILE"
   make -j"$(nproc)" >> "$LOG_FILE" 2>&1
+  ok "Compilacion exitosa."
 
-  info "Instalando Asterisk..."
-  make install >> "$LOG_FILE" 2>&1
-  make samples >> "$LOG_FILE" 2>&1
-  make config  >> "$LOG_FILE" 2>&1
-  ldconfig     >> "$LOG_FILE" 2>&1
+  run "Instalando binarios..."                 make install
+  run "Instalando configuraciones de muestra..." make samples
+  run "Instalando script de inicio..."         make config
+  run "Actualizando librerias del sistema..."  ldconfig
 
   ok "Asterisk $ASTERISK_VERSION instalado correctamente."
 }
 
-# ─── Paso 3: Configurar Asterisk ─────────────────────────────────────────────
+# ─── Paso 3: Configurar Asterisk ──────────────────────────────────────────────
 configure_asterisk() {
   step "PASO 3 — Configurando Asterisk"
 
   info "Creando usuario y grupo 'asterisk'..."
-  getent group asterisk  > /dev/null 2>&1 || groupadd asterisk
-  id asterisk            > /dev/null 2>&1 || useradd -r -d /var/lib/asterisk -g asterisk asterisk
+  getent group asterisk > /dev/null 2>&1 || groupadd asterisk
+  id asterisk           > /dev/null 2>&1 || useradd -r -d /var/lib/asterisk -g asterisk asterisk
   usermod -aG audio,dialout asterisk
+  ok "Usuario y grupo creados."
 
   info "Aplicando permisos de directorios..."
   chown -R asterisk:asterisk /etc/asterisk
   chown -R asterisk:asterisk /var/{lib,log,spool}/asterisk
   chown -R asterisk:asterisk /usr/lib/asterisk
+  ok "Permisos aplicados."
 
-  info "Configurando usuario en /etc/default/asterisk..."
-  sed -i 's/^#*\s*AST_USER=.*/AST_USER="asterisk"/'  /etc/default/asterisk  2>/dev/null || \
+  info "Configurando /etc/default/asterisk..."
+  sed -i 's/^#*\s*AST_USER=.*/AST_USER="asterisk"/'  /etc/default/asterisk 2>/dev/null || \
     echo 'AST_USER="asterisk"' >> /etc/default/asterisk
   sed -i 's/^#*\s*AST_GROUP=.*/AST_GROUP="asterisk"/' /etc/default/asterisk 2>/dev/null || \
     echo 'AST_GROUP="asterisk"' >> /etc/default/asterisk
@@ -188,35 +282,40 @@ configure_asterisk() {
   sed -i 's/^;*\s*runuser\s*=.*/runuser = asterisk/'   /etc/asterisk/asterisk.conf
   sed -i 's/^;*\s*rungroup\s*=.*/rungroup = asterisk/' /etc/asterisk/asterisk.conf
 
-  info "Corrigiendo error de radiusclient (si aplica)..."
-  sed -i 's|;;\[radius\]|;\[radius\]|g' /etc/asterisk/cdr.conf 2>/dev/null || true
+  info "Corrigiendo error de radiusclient..."
+  sed -i 's|;;\[radius\]|;\[radius\]|g' \
+    /etc/asterisk/cdr.conf 2>/dev/null || true
   sed -i 's|;radiuscfg => /usr/local/etc/radiusclient-ng/radiusclient.conf|radiuscfg => /etc/radcli/radiusclient.conf|g' \
     /etc/asterisk/cdr.conf 2>/dev/null || true
   sed -i 's|;radiuscfg => /usr/local/etc/radiusclient-ng/radiusclient.conf|radiuscfg => /etc/radcli/radiusclient.conf|g' \
     /etc/asterisk/cel.conf 2>/dev/null || true
+  ok "Correccion radiusclient aplicada."
 
-  info "Habilitando e iniciando servicio Asterisk..."
-  systemctl enable asterisk >> "$LOG_FILE" 2>&1
+  run "Habilitando servicio Asterisk en systemd..." systemctl enable asterisk
+
+  info "Iniciando servicio Asterisk..."
   systemctl restart asterisk >> "$LOG_FILE" 2>&1
+  sleep 4
 
-  sleep 3
   if systemctl is-active --quiet asterisk; then
-    ok "Asterisk está corriendo correctamente."
+    ok "Asterisk esta corriendo correctamente."
+    echo "  [INFO] PID: $(systemctl show asterisk --property=MainPID --value)" >> "$LOG_FILE"
   else
-    warn "Asterisk no levantó correctamente. Revise: journalctl -u asterisk"
+    warn "Asterisk no levanto correctamente. Volcando journalctl al log..."
+    journalctl -u asterisk -n 40 --no-pager >> "$LOG_FILE" 2>&1
+    error "Asterisk no esta activo. Revise el log para mas detalles."
+    exit 1
   fi
 }
 
-# ─── Paso 4: PHP 8.2 ─────────────────────────────────────────────────────────
+# ─── Paso 4: PHP 8.2 ──────────────────────────────────────────────────────────
 install_php82() {
   step "PASO 4 — Instalando PHP $PHP_TARGET (requerido por FreePBX 17)"
 
-  info "Agregando repositorio PPA de Ondrej..."
-  add-apt-repository ppa:ondrej/php -y >> "$LOG_FILE" 2>&1
-  apt-get update -y >> "$LOG_FILE" 2>&1
+  run "Agregando repositorio PPA de Ondrej..." add-apt-repository ppa:ondrej/php -y
+  run "Actualizando lista de paquetes..."      apt-get update -y
 
-  info "Instalando PHP $PHP_TARGET y extensiones..."
-  apt-get install -y \
+  run "Instalando PHP $PHP_TARGET y extensiones..." apt-get install -y \
     php${PHP_TARGET} \
     libapache2-mod-php${PHP_TARGET} \
     php${PHP_TARGET}-intl \
@@ -233,33 +332,36 @@ install_php82() {
     php${PHP_TARGET}-sqlite3 \
     php${PHP_TARGET}-soap \
     php${PHP_TARGET}-ldap \
-    php${PHP_TARGET}-imap >> "$LOG_FILE" 2>&1
+    php${PHP_TARGET}-imap
 
-  # Solo deshabilitar si el módulo está activo
-  info "Configurando Apache para usar PHP $PHP_TARGET..."
-  a2dismod "php${PHP_DEFAULT}" >> "$LOG_FILE" 2>&1 || warn "php${PHP_DEFAULT} no estaba activo en Apache (normal)."
-  a2enmod  "php${PHP_TARGET}"  >> "$LOG_FILE" 2>&1
-  systemctl restart apache2    >> "$LOG_FILE" 2>&1
+  info "Deshabilitando PHP $PHP_DEFAULT en Apache..."
+  a2dismod "php${PHP_DEFAULT}" >> "$LOG_FILE" 2>&1 || \
+    warn "php${PHP_DEFAULT} no estaba activo en Apache (es normal)."
 
-  info "Estableciendo PHP $PHP_TARGET como versión por defecto del sistema..."
-  update-alternatives --set php      /usr/bin/php${PHP_TARGET}      >> "$LOG_FILE" 2>&1 || true
-  update-alternatives --set phar     /usr/bin/phar${PHP_TARGET}     >> "$LOG_FILE" 2>&1 || true
+  run "Habilitando PHP $PHP_TARGET en Apache..." a2enmod "php${PHP_TARGET}"
+  run "Reiniciando Apache..."                    systemctl restart apache2
+
+  info "Estableciendo PHP $PHP_TARGET como version por defecto..."
+  update-alternatives --set php       /usr/bin/php${PHP_TARGET}       >> "$LOG_FILE" 2>&1 || true
+  update-alternatives --set phar      /usr/bin/phar${PHP_TARGET}      >> "$LOG_FILE" 2>&1 || true
   update-alternatives --set phar.phar /usr/bin/phar.phar${PHP_TARGET} >> "$LOG_FILE" 2>&1 || true
 
   ACTIVE_PHP=$(php -v 2>/dev/null | head -1 | awk '{print $2}' | cut -d. -f1,2)
+  echo "  [INFO] php -v -> $ACTIVE_PHP" >> "$LOG_FILE"
+
   if [[ "$ACTIVE_PHP" == "$PHP_TARGET" ]]; then
-    ok "PHP $PHP_TARGET activo correctamente. (php -v → $ACTIVE_PHP)"
+    ok "PHP $PHP_TARGET activo correctamente."
   else
-    warn "La versión activa de PHP es $ACTIVE_PHP. Verifique manualmente con 'php -v'."
+    warn "Version activa de PHP: '$ACTIVE_PHP' (se esperaba '$PHP_TARGET')."
+    warn "Intente: update-alternatives --set php /usr/bin/php${PHP_TARGET}"
   fi
 }
 
-# ─── Paso 5: FreePBX ─────────────────────────────────────────────────────────
+# ─── Paso 5: FreePBX ──────────────────────────────────────────────────────────
 install_freepbx() {
   step "PASO 5 — Instalando FreePBX $FREEPBX_VERSION"
 
-  info "Instalando stack LAMP (Apache, MariaDB, PHP $PHP_TARGET)..."
-  apt-get install -y \
+  run "Instalando stack LAMP con PHP $PHP_TARGET..." apt-get install -y \
     mariadb-server apache2 \
     php${PHP_TARGET} libapache2-mod-php${PHP_TARGET} \
     php${PHP_TARGET}-intl php${PHP_TARGET}-mysql php${PHP_TARGET}-curl \
@@ -267,115 +369,155 @@ install_freepbx() {
     php${PHP_TARGET}-gd php${PHP_TARGET}-common php${PHP_TARGET}-mbstring \
     php${PHP_TARGET}-xmlrpc php${PHP_TARGET}-bcmath php${PHP_TARGET}-sqlite3 \
     php${PHP_TARGET}-soap php${PHP_TARGET}-ldap php${PHP_TARGET}-imap \
-    nodejs npm >> "$LOG_FILE" 2>&1
+    nodejs npm
 
-  systemctl enable mariadb >> "$LOG_FILE" 2>&1
-  systemctl start  mariadb >> "$LOG_FILE" 2>&1
+  run "Habilitando MariaDB..." systemctl enable mariadb
+  run "Iniciando MariaDB..."   systemctl start  mariadb
+
+  cd /usr/src
 
   info "Descargando FreePBX $FREEPBX_VERSION..."
-  cd /usr/src
-  wget -q --show-progress "$FREEPBX_URL" -O "freepbx-${FREEPBX_VERSION}-latest.tgz"
+  echo "  [CMD $(_ts)] wget $FREEPBX_URL" >> "$LOG_FILE"
+  wget -q --show-progress "$FREEPBX_URL" -O "freepbx-${FREEPBX_VERSION}-latest.tgz" 2>&1 | tee -a "$LOG_FILE"
 
-  info "Extrayendo FreePBX..."
-  tar -xzf "freepbx-${FREEPBX_VERSION}-latest.tgz"
+  run "Extrayendo FreePBX..." tar -xzf "freepbx-${FREEPBX_VERSION}-latest.tgz"
   cd freepbx
 
   info "Configurando Apache (usuario asterisk + AllowOverride)..."
   sed -i 's/^\(User\|Group\).*/\1 asterisk/' /etc/apache2/apache2.conf
   sed -i 's/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
+  ok "Apache configurado."
 
-  info "Configurando upload_max_filesize en php.ini para PHP $PHP_TARGET..."
+  info "Configurando upload_max_filesize en php.ini..."
   for ini_file in /etc/php/${PHP_TARGET}/apache2/php.ini /etc/php/${PHP_TARGET}/cli/php.ini; do
-    [[ -f "$ini_file" ]] && sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 20M/' "$ini_file"
+    if [[ -f "$ini_file" ]]; then
+      sed -i 's/^upload_max_filesize = .*/upload_max_filesize = 20M/' "$ini_file"
+      echo "  [INFO] php.ini actualizado: $ini_file" >> "$LOG_FILE"
+    else
+      warn "No se encontro: $ini_file"
+    fi
   done
 
-  info "Habilitando mod_rewrite y reiniciando Apache..."
-  a2enmod rewrite >> "$LOG_FILE" 2>&1
-  systemctl restart apache2 >> "$LOG_FILE" 2>&1
+  run "Habilitando mod_rewrite..." a2enmod rewrite
+  run "Reiniciando Apache..."      systemctl restart apache2
 
   info "Ejecutando instalador de FreePBX (puede tardar varios minutos)..."
-  ./install -n >> "$LOG_FILE" 2>&1
+  echo "  [CMD $(_ts)] ./install -n" >> "$LOG_FILE"
+  if ! ./install -n >> "$LOG_FILE" 2>&1; then
+    error "El instalador de FreePBX fallo. Revise: tail -80 $LOG_FILE"
+    exit 1
+  fi
+  ok "FreePBX instalado exitosamente."
 
-  info "Instalando módulo pm2..."
-  fwconsole ma install pm2 >> "$LOG_FILE" 2>&1 || warn "pm2 no pudo instalarse automáticamente. Ejecute manualmente: fwconsole ma install pm2"
+  info "Instalando modulo pm2..."
+  fwconsole ma install pm2 >> "$LOG_FILE" 2>&1 || \
+    warn "pm2 no se instalo automaticamente. Ejecute: fwconsole ma install pm2"
 
-  info "Aplicando configuración inicial de FreePBX..."
   fwconsole chown  >> "$LOG_FILE" 2>&1 || true
   fwconsole reload >> "$LOG_FILE" 2>&1 || true
 
-  ok "FreePBX $FREEPBX_VERSION instalado correctamente."
+  ok "FreePBX $FREEPBX_VERSION configurado correctamente."
 }
 
-# ─── Paso 6: Firewall ────────────────────────────────────────────────────────
+# ─── Paso 6: Firewall ─────────────────────────────────────────────────────────
 configure_firewall() {
   step "PASO 6 — Configurando Firewall (UFW)"
 
-  apt-get install -y ufw >> "$LOG_FILE" 2>&1
+  run "Instalando UFW..." apt-get install -y ufw
 
-  info "Configurando reglas de firewall para VoIP..."
-  ufw --force reset  >> "$LOG_FILE" 2>&1
-  ufw default deny incoming >> "$LOG_FILE" 2>&1
+  info "Aplicando reglas VoIP..."
+  ufw --force reset          >> "$LOG_FILE" 2>&1
+  ufw default deny incoming  >> "$LOG_FILE" 2>&1
   ufw default allow outgoing >> "$LOG_FILE" 2>&1
+  ufw allow 22/tcp              comment 'SSH'       >> "$LOG_FILE" 2>&1
+  ufw allow 80/tcp              comment 'HTTP'      >> "$LOG_FILE" 2>&1
+  ufw allow 443/tcp             comment 'HTTPS'     >> "$LOG_FILE" 2>&1
+  ufw allow 5060/udp            comment 'SIP'       >> "$LOG_FILE" 2>&1
+  ufw allow 5061/tcp            comment 'SIP TLS'   >> "$LOG_FILE" 2>&1
+  ufw allow 10000:20000/udp     comment 'RTP Audio' >> "$LOG_FILE" 2>&1
+  ufw --force enable            >> "$LOG_FILE" 2>&1
 
-  ufw allow 22/tcp    comment 'SSH'      >> "$LOG_FILE" 2>&1
-  ufw allow 80/tcp    comment 'HTTP'     >> "$LOG_FILE" 2>&1
-  ufw allow 443/tcp   comment 'HTTPS'    >> "$LOG_FILE" 2>&1
-  ufw allow 5060/udp  comment 'SIP'      >> "$LOG_FILE" 2>&1
-  ufw allow 5061/tcp  comment 'SIP TLS'  >> "$LOG_FILE" 2>&1
-  ufw allow 10000:20000/udp comment 'RTP Audio' >> "$LOG_FILE" 2>&1
+  echo "  [INFO] Reglas UFW activas:" >> "$LOG_FILE"
+  ufw status >> "$LOG_FILE" 2>&1
 
-  ufw --force enable >> "$LOG_FILE" 2>&1
   ok "Firewall UFW activo con reglas VoIP."
 }
 
-# ─── Resumen final ───────────────────────────────────────────────────────────
+# ─── Resumen final ────────────────────────────────────────────────────────────
 show_summary() {
+  local SERVER_IP
   SERVER_IP=$(hostname -I | awk '{print $1}')
+  local END_TIME
+  END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+
+  {
+    echo ""
+    echo "===================================================="
+    echo "  RESUMEN DE INSTALACION EXITOSA"
+    echo "  Inicio : $INSTALL_START"
+    echo "  Fin    : $END_TIME"
+    echo "  Ubuntu   : $UBUNTU_VERSION"
+    echo "  Asterisk : $ASTERISK_VERSION"
+    echo "  FreePBX  : $FREEPBX_VERSION"
+    echo "  PHP      : $PHP_TARGET (reemplazo PHP $PHP_DEFAULT)"
+    echo "  URL      : http://$SERVER_IP/admin"
+    echo "===================================================="
+  } >> "$LOG_FILE"
 
   echo -e "\n${BOLD}${GREEN}"
   echo "╔══════════════════════════════════════════════════════════════╗"
-  echo "║                  ✔  INSTALACIÓN COMPLETA                    ║"
+  echo "║                  OK  INSTALACION COMPLETA                   ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
   echo -e "${NC}"
-  echo -e "${BOLD}  Resumen del sistema instalado:${NC}"
-  echo -e "  Ubuntu:    ${CYAN}$UBUNTU_VERSION${NC}"
-  echo -e "  Asterisk:  ${CYAN}$ASTERISK_VERSION${NC}"
-  echo -e "  FreePBX:   ${CYAN}$FREEPBX_VERSION${NC}"
-  echo -e "  PHP:       ${CYAN}$PHP_TARGET${NC}  (default del sistema era $PHP_DEFAULT)"
+  echo -e "${BOLD}  Resumen:${NC}"
+  echo -e "  Ubuntu   : ${CYAN}$UBUNTU_VERSION${NC}"
+  echo -e "  Asterisk : ${CYAN}$ASTERISK_VERSION${NC}"
+  echo -e "  FreePBX  : ${CYAN}$FREEPBX_VERSION${NC}"
+  echo -e "  PHP      : ${CYAN}$PHP_TARGET${NC}  (reemplazo PHP $PHP_DEFAULT)"
   echo ""
   echo -e "${BOLD}  Acceso a FreePBX:${NC}"
-  echo -e "  URL:       ${CYAN}http://$SERVER_IP/admin${NC}"
-  echo -e "  Usuario:   ${CYAN}asterisk${NC}  (o el que configure en el primer acceso)"
+  echo -e "  URL     : ${CYAN}http://$SERVER_IP/admin${NC}"
+  echo -e "  Usuario : ${CYAN}asterisk${NC}  (o el que configure en el primer acceso)"
   echo ""
-  echo -e "${BOLD}  Log completo:${NC}  ${CYAN}$LOG_FILE${NC}"
-  echo -e "${BOLD}  CLI Asterisk:${NC}  ${CYAN}asterisk -rvv${NC}"
+  echo -e "${BOLD}  Log completo :${NC} ${CYAN}$LOG_FILE${NC}"
+  echo -e "${BOLD}  CLI Asterisk :${NC} ${CYAN}asterisk -rvv${NC}"
   echo ""
-  echo -e "${YELLOW}  PRÓXIMO PASO: Abra el navegador en http://$SERVER_IP/admin${NC}"
-  echo -e "${YELLOW}  y complete la configuración inicial del administrador.${NC}\n"
+  echo -e "${YELLOW}  PROXIMO PASO: Abra el navegador en http://$SERVER_IP/admin${NC}"
+  echo -e "${YELLOW}  y complete la configuracion inicial del administrador.${NC}\n"
 }
 
-# ─── Main ────────────────────────────────────────────────────────────────────
+# ─── Main ─────────────────────────────────────────────────────────────────────
 main() {
   mkdir -p "$(dirname "$LOG_FILE")"
-  : > "$LOG_FILE"   # limpiar log anterior
+  : > "$LOG_FILE"
 
   banner
-  log "Inicio de instalación: $(date)"
+
+  {
+    echo "===================================================="
+    echo "  INICIO DE INSTALACION: $INSTALL_START"
+    echo "  Script version: 3.0"
+    echo "  Ejecutado por : $(whoami) (UID=$EUID)"
+    echo "  Hostname      : $(hostname)"
+    echo "===================================================="
+  } | tee -a "$LOG_FILE"
 
   check_root
   detect_ubuntu
   check_internet
+  check_disk_space
 
-  echo -e "\n${BOLD}Se instalarán los siguientes componentes:${NC}"
-  echo -e "  • Dependencias del sistema"
-  echo -e "  • Asterisk $ASTERISK_VERSION (compilado desde fuente)"
-  echo -e "  • PHP $PHP_TARGET (desde PPA Ondrej, reemplazando PHP $PHP_DEFAULT)"
-  echo -e "  • FreePBX $FREEPBX_VERSION"
-  echo -e "  • Firewall UFW con reglas VoIP\n"
+  echo -e "\n${BOLD}Se instalaran los siguientes componentes:${NC}"
+  echo -e "  * Dependencias del sistema"
+  echo -e "  * Asterisk $ASTERISK_VERSION (compilado desde fuente)"
+  echo -e "  * PHP $PHP_TARGET (desde PPA Ondrej, reemplazando PHP $PHP_DEFAULT)"
+  echo -e "  * FreePBX $FREEPBX_VERSION"
+  echo -e "  * Firewall UFW con reglas VoIP"
+  echo -e "\n  Para seguir el log en otra terminal: ${CYAN}tail -f $LOG_FILE${NC}\n"
 
-  echo -e "${YELLOW}¿Desea continuar? [s/N]: ${NC}"
-  read -r -t 15 CONFIRM || CONFIRM="s"   # si no responde en 15s, continúa
-  [[ "$CONFIRM" =~ ^[sS]$ ]] || { echo "Instalación cancelada."; exit 0; }
+  echo -e "${YELLOW}Desea continuar? [s/N]: ${NC}"
+  read -r -t 15 CONFIRM || CONFIRM="s"
+  [[ "$CONFIRM" =~ ^[sS]$ ]] || { echo "Instalacion cancelada."; exit 0; }
 
   install_dependencies
   install_asterisk
@@ -385,7 +527,7 @@ main() {
   configure_firewall
   show_summary
 
-  log "Instalación completada: $(date)"
+  log "Instalacion completada exitosamente: $(date '+%Y-%m-%d %H:%M:%S')"
 }
 
 main "$@"
