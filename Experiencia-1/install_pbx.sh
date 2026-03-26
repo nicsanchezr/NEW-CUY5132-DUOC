@@ -5,7 +5,7 @@
 #  Compatible con Ubuntu 22.04 LTS y Ubuntu 24.04 LTS
 #
 #  Autor:   CUY5132 — Comunicaciones Unificadas y VoIP — DUOC UC
-#  Versión: 3.0
+#  Versión: 4.0
 #  Uso:     sudo bash install_pbx.sh
 # =============================================================================
 
@@ -185,6 +185,144 @@ check_disk_space() {
   fi
   ok "Espacio en disco suficiente: ${free_gb} GB libres."
 }
+
+# ─── Detección y limpieza de instalaciones previas ────────────────────────────
+check_previous_installation() {
+  step "VERIFICACION — Detectando instalaciones previas"
+
+  local has_asterisk=false
+  local has_freepbx=false
+  local has_partial_src=false
+  local needs_cleanup=false
+
+  # Detectar Asterisk instalado
+  if command -v asterisk > /dev/null 2>&1; then
+    local ast_ver
+    ast_ver=$(asterisk -V 2>/dev/null || echo "desconocida")
+    warn "Asterisk detectado en el sistema: $ast_ver"
+    has_asterisk=true
+    needs_cleanup=true
+  fi
+
+  # Detectar FreePBX instalado
+  if command -v fwconsole > /dev/null 2>&1 || [[ -d /var/www/html/admin ]]; then
+    warn "FreePBX detectado en el sistema."
+    has_freepbx=true
+    needs_cleanup=true
+  fi
+
+  # Detectar fuentes parciales en /usr/src
+  if ls /usr/src/asterisk-${ASTERISK_VERSION}.* > /dev/null 2>&1; then
+    warn "Directorio de compilacion de Asterisk encontrado en /usr/src."
+    has_partial_src=true
+    needs_cleanup=true
+  fi
+  if [[ -f /usr/src/freepbx-${FREEPBX_VERSION}-latest.tgz ]] || [[ -d /usr/src/freepbx ]]; then
+    warn "Archivos de FreePBX encontrados en /usr/src."
+    has_partial_src=true
+    needs_cleanup=true
+  fi
+
+  if [[ "$needs_cleanup" == false ]]; then
+    ok "No se detectaron instalaciones previas. Continuando instalacion limpia."
+    return 0
+  fi
+
+  # Mostrar resumen de lo encontrado
+  echo -e "
+${YELLOW}${BOLD}  Se detectaron los siguientes componentes previos:${NC}"
+  [[ "$has_asterisk"     == true ]] && echo -e "${YELLOW}    * Asterisk instalado${NC}"
+  [[ "$has_freepbx"      == true ]] && echo -e "${YELLOW}    * FreePBX instalado${NC}"
+  [[ "$has_partial_src"  == true ]] && echo -e "${YELLOW}    * Archivos de compilacion en /usr/src${NC}"
+  echo ""
+  echo -e "${YELLOW}  Continuar sin limpiar puede causar conflictos o fallos.${NC}"
+  echo -e "${YELLOW}  Se recomienda limpiar antes de reinstalar.${NC}
+"
+
+  echo -e "${YELLOW}  Desea limpiar la instalacion previa y continuar? [s/N]: ${NC}"
+  read -r -t 20 CLEAN_CONFIRM || CLEAN_CONFIRM="s"
+
+  if [[ "$CLEAN_CONFIRM" =~ ^[sS]$ ]]; then
+    cleanup_previous "$has_asterisk" "$has_freepbx" "$has_partial_src"
+  else
+    warn "Se omitio la limpieza. La instalacion continuara sobre el estado actual."
+    warn "Si falla, ejecute el script nuevamente y acepte la limpieza."
+  fi
+}
+
+cleanup_previous() {
+  local do_asterisk="$1"
+  local do_freepbx="$2"
+  local do_src="$3"
+
+  step "LIMPIEZA — Eliminando instalacion previa"
+
+  # Detener servicios activos
+  info "Deteniendo servicios activos..."
+  for svc in asterisk apache2 mariadb; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+      systemctl stop "$svc" >> "$LOG_FILE" 2>&1 && info "  Servicio $svc detenido." || true
+    fi
+  done
+
+  # Limpiar Asterisk
+  if [[ "$do_asterisk" == true ]]; then
+    info "Eliminando Asterisk..."
+    # Desinstalar via make si el directorio fuente existe
+    local ast_src
+    ast_src=$(find /usr/src -maxdepth 1 -type d -name "asterisk-${ASTERISK_VERSION}.*" 2>/dev/null | head -1)
+    if [[ -n "$ast_src" ]]; then
+      cd "$ast_src" && make uninstall >> "$LOG_FILE" 2>&1 || true
+      cd /usr/src
+    fi
+    # Limpieza manual de binarios y configs
+    rm -f  /usr/sbin/asterisk                   >> "$LOG_FILE" 2>&1 || true
+    rm -rf /etc/asterisk                         >> "$LOG_FILE" 2>&1 || true
+    rm -rf /var/lib/asterisk                     >> "$LOG_FILE" 2>&1 || true
+    rm -rf /var/log/asterisk                     >> "$LOG_FILE" 2>&1 || true
+    rm -rf /var/spool/asterisk                   >> "$LOG_FILE" 2>&1 || true
+    rm -rf /usr/lib/asterisk                     >> "$LOG_FILE" 2>&1 || true
+    rm -f  /etc/init.d/asterisk                  >> "$LOG_FILE" 2>&1 || true
+    rm -f  /etc/default/asterisk                 >> "$LOG_FILE" 2>&1 || true
+    systemctl daemon-reload                      >> "$LOG_FILE" 2>&1 || true
+    # Eliminar usuario y grupo si existen
+    id asterisk > /dev/null 2>&1 && userdel asterisk >> "$LOG_FILE" 2>&1 || true
+    getent group asterisk > /dev/null 2>&1 && groupdel asterisk >> "$LOG_FILE" 2>&1 || true
+    ok "Asterisk eliminado."
+  fi
+
+  # Limpiar FreePBX
+  if [[ "$do_freepbx" == true ]]; then
+    info "Eliminando FreePBX..."
+    # Usar fwconsole si aun esta disponible
+    if command -v fwconsole > /dev/null 2>&1; then
+      fwconsole stop >> "$LOG_FILE" 2>&1 || true
+    fi
+    rm -rf /var/www/html/admin                   >> "$LOG_FILE" 2>&1 || true
+    rm -rf /var/www/html/index.php               >> "$LOG_FILE" 2>&1 || true
+    rm -rf /etc/freepbx.conf                     >> "$LOG_FILE" 2>&1 || true
+    rm -rf /etc/asterisk/freepbx_*               >> "$LOG_FILE" 2>&1 || true
+    rm -f  /usr/sbin/fwconsole                   >> "$LOG_FILE" 2>&1 || true
+    # Limpiar base de datos FreePBX
+    if systemctl is-active --quiet mariadb 2>/dev/null || systemctl start mariadb >> "$LOG_FILE" 2>&1; then
+      mysql -e "DROP DATABASE IF EXISTS asterisk;" >> "$LOG_FILE" 2>&1 || true
+      mysql -e "DROP DATABASE IF EXISTS asteriskcdrdb;" >> "$LOG_FILE" 2>&1 || true
+      info "  Bases de datos de FreePBX eliminadas."
+    fi
+    ok "FreePBX eliminado."
+  fi
+
+  # Limpiar archivos en /usr/src
+  if [[ "$do_src" == true ]]; then
+    info "Limpiando archivos de compilacion en /usr/src..."
+    rm -rf /usr/src/asterisk-${ASTERISK_VERSION}* >> "$LOG_FILE" 2>&1 || true
+    rm -rf /usr/src/freepbx*                      >> "$LOG_FILE" 2>&1 || true
+    ok "Archivos de /usr/src eliminados."
+  fi
+
+  ok "Limpieza completada. Continuando con instalacion limpia."
+}
+
 
 # ─── Paso 1: Dependencias ─────────────────────────────────────────────────────
 install_dependencies() {
@@ -403,11 +541,18 @@ install_freepbx() {
 
   info "Ejecutando instalador de FreePBX (puede tardar varios minutos)..."
   echo "  [CMD $(_ts)] ./install -n" >> "$LOG_FILE"
-  if ! ./install -n >> "$LOG_FILE" 2>&1; then
-    error "El instalador de FreePBX fallo. Revise: tail -80 $LOG_FILE"
+  # Nota: ./install -n puede retornar exit code != 0 aunque la instalacion sea exitosa.
+  # Verificamos el resultado comprobando que fwconsole quedo disponible.
+  ./install -n >> "$LOG_FILE" 2>&1 || true
+
+  if command -v fwconsole > /dev/null 2>&1; then
+    ok "FreePBX instalado exitosamente (fwconsole disponible)."
+    echo "  [INFO] fwconsole ubicado en: $(command -v fwconsole)" >> "$LOG_FILE"
+  else
+    error "FreePBX no se instalo correctamente: fwconsole no encontrado."
+    error "Revise las ultimas lineas del log: tail -80 $LOG_FILE"
     exit 1
   fi
-  ok "FreePBX instalado exitosamente."
 
   info "Instalando modulo pm2..."
   fwconsole ma install pm2 >> "$LOG_FILE" 2>&1 || \
@@ -496,7 +641,7 @@ main() {
   {
     echo "===================================================="
     echo "  INICIO DE INSTALACION: $INSTALL_START"
-    echo "  Script version: 3.0"
+    echo "  Script version: 4.0"
     echo "  Ejecutado por : $(whoami) (UID=$EUID)"
     echo "  Hostname      : $(hostname)"
     echo "===================================================="
@@ -506,6 +651,7 @@ main() {
   detect_ubuntu
   check_internet
   check_disk_space
+  check_previous_installation
 
   echo -e "\n${BOLD}Se instalaran los siguientes componentes:${NC}"
   echo -e "  * Dependencias del sistema"
